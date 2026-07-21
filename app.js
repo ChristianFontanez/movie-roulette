@@ -337,14 +337,14 @@ function renderMovieList() {
       playerName(m.owner_id) + (m.owner_id === excludedPlayerId ? " · sitting out" : "");
     li.appendChild(dot);
     li.appendChild(main);
-    if (m.owner_id === me.id && !spin) {
-      const del = document.createElement("button");
-      del.className = "movie-del";
-      del.textContent = "✕";
-      del.title = "Remove";
-      del.onclick = () => removeMovie(m.id);
-      li.appendChild(del);
-    }
+    const del = document.createElement("button");
+    del.className = "movie-del";
+    del.type = "button";
+    del.textContent = "✕";
+    del.title = "Remove this movie";
+    del.setAttribute("aria-label", `Remove ${m.title}`);
+    del.onclick = () => removeMovie(m.id, m.title);
+    li.appendChild(del);
     ul.appendChild(li);
   });
 }
@@ -362,8 +362,10 @@ async function onAddMovie(e) {
   await reload();
 }
 
-async function removeMovie(id) {
-  await sb.from("movies").delete().eq("id", id);
+async function removeMovie(id, title) {
+  if (!confirm(`Remove "${title}" from this week?`)) return;
+  const { error } = await sb.from("movies").delete().eq("id", id);
+  if (error) alert(error.message);
   await reload();
 }
 
