@@ -219,9 +219,57 @@ async function startApp() {
 
   $("add-movie-form").onsubmit = onAddMovie;
   $("spin-btn").onclick = onSpin;
+  setupMenu();
 
   await reload();
   subscribeRealtime();
+}
+
+// ------------------------------------------------------------------
+// Menu / reset
+// ------------------------------------------------------------------
+function openMenu() {
+  $("reset-pass").value = "";
+  $("reset-msg").className = "small hidden";
+  $("menu").classList.remove("hidden");
+}
+function closeMenu() {
+  $("menu").classList.add("hidden");
+}
+function setupMenu() {
+  $("menu-btn").onclick = openMenu;
+  $("menu-close").onclick = closeMenu;
+  $("menu-backdrop").onclick = closeMenu;
+  $("reset-form").onsubmit = onReset;
+}
+
+async function onReset(e) {
+  e.preventDefault();
+  const msg = $("reset-msg");
+  msg.className = "small hidden";
+  const val = $("reset-pass").value.trim();
+  if (!val) return;
+
+  const hash = await sha256(val);
+  const stored = await getStoredHash();
+  if (!stored || hash !== stored) {
+    msg.textContent = "That passphrase doesn't match.";
+    msg.className = "small bad";
+    return;
+  }
+
+  const { error } = await sb.from("spins").delete().eq("week_start", CUR_WEEK);
+  if (error) {
+    msg.textContent = error.message;
+    msg.className = "small bad";
+    return;
+  }
+  lastAnimatedSpinId = null;
+  $("reset-pass").value = "";
+  await reload();
+  msg.textContent = "Done — the wheel is ready to spin again!";
+  msg.className = "small ok";
+  setTimeout(closeMenu, 1400);
 }
 
 async function reload() {

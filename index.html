@@ -46,7 +46,10 @@
   <div id="app" class="screen hidden">
     <header class="topbar">
       <div class="brand">🎬 Movie Roulette</div>
-      <button id="who-chip" class="chip" title="Switch player"></button>
+      <div class="topbar-actions">
+        <button id="who-chip" class="chip" title="Switch player"></button>
+        <button id="menu-btn" class="chip icon-chip" title="Menu" aria-label="Open menu">⚙️</button>
+      </div>
     </header>
 
     <main>
@@ -82,6 +85,29 @@
     <footer class="footer muted small">
       Everyone sees the same wheel, live. Winner sits out next week only.
     </footer>
+
+    <!-- Menu / settings -->
+    <div id="menu" class="modal hidden">
+      <div class="modal-backdrop" id="menu-backdrop"></div>
+      <div class="modal-card">
+        <button id="menu-close" class="modal-close" aria-label="Close menu">✕</button>
+        <h2>Menu</h2>
+
+        <div class="menu-section">
+          <h3>🔄 Reset this week's spin</h3>
+          <p class="muted small">
+            Clears the current result so the wheel can be spun again — handy if
+            someone spun by mistake. Enter the group passphrase to confirm.
+          </p>
+          <form id="reset-form" class="row">
+            <input id="reset-pass" type="password" autocomplete="off"
+                   placeholder="Group passphrase" aria-label="Group passphrase" />
+            <button class="btn danger" type="submit">Reset</button>
+          </form>
+          <p id="reset-msg" class="small hidden"></p>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Boot error -->
