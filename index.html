@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e0b16" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Movie Roulette</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%A5%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Passphrase gate ------------------------------------------------ -->
+  <div id="gate" class="screen hidden">
+    <div class="card gate-card">
+      <div class="logo">🎬</div>
+      <h1>Movie Roulette</h1>
+      <p id="gate-sub" class="muted">Enter the group passphrase</p>
+      <form id="gate-form">
+        <input id="gate-input" type="password" inputmode="text" autocomplete="off"
+               placeholder="Passphrase" aria-label="Group passphrase" />
+        <button class="btn primary" type="submit">Enter</button>
+      </form>
+      <p id="gate-error" class="error hidden"></p>
+    </div>
+  </div>
+
+  <!-- Pick-your-name screen ------------------------------------------ -->
+  <div id="whoami" class="screen hidden">
+    <div class="card">
+      <div class="logo">👋</div>
+      <h1>Who are you?</h1>
+      <p class="muted">Pick your name, or add yourself.</p>
+      <div id="player-list" class="player-list"></div>
+      <form id="add-player-form" class="row">
+        <input id="new-player-name" type="text" autocomplete="off" maxlength="24"
+               placeholder="Your name" aria-label="Your name" />
+        <button class="btn primary" type="submit">Add me</button>
+      </form>
+      <p id="whoami-error" class="error hidden"></p>
+    </div>
+  </div>
+
+  <!-- Main app ------------------------------------------------------- -->
+  <div id="app" class="screen hidden">
+    <header class="topbar">
+      <div class="brand">🎬 Movie Roulette</div>
+      <button id="who-chip" class="chip" title="Switch player"></button>
+    </header>
+
+    <main>
+      <section class="week-banner">
+        <div id="week-label" class="week-label"></div>
+        <div id="sitting-out" class="sitting-out"></div>
+      </section>
+
+      <!-- Wheel -->
+      <section class="wheel-section card">
+        <div class="wheel-wrap">
+          <div class="pointer"></div>
+          <canvas id="wheel" width="600" height="600" aria-label="Roulette wheel"></canvas>
+          <div id="wheel-empty" class="wheel-empty hidden">Add some movies to fill the wheel 🍿</div>
+        </div>
+        <div id="result" class="result hidden"></div>
+        <button id="spin-btn" class="btn primary big" disabled>Spin the wheel</button>
+        <p id="spin-note" class="muted center small"></p>
+      </section>
+
+      <!-- This week's movies -->
+      <section class="card">
+        <h2>This week's movies</h2>
+        <form id="add-movie-form" class="row">
+          <input id="movie-title" type="text" autocomplete="off" maxlength="80"
+                 placeholder="Add a movie…" aria-label="Movie title" />
+          <button class="btn primary" type="submit">Add</button>
+        </form>
+        <ul id="movie-list" class="movie-list"></ul>
+      </section>
+    </main>
+
+    <footer class="footer muted small">
+      Everyone sees the same wheel, live. Winner sits out next week only.
+    </footer>
+  </div>
+
+  <!-- Boot error -->
+  <div id="boot-error" class="screen hidden">
+    <div class="card">
+      <div class="logo">⚠️</div>
+      <h1>Not configured</h1>
+      <p id="boot-error-msg" class="muted"></p>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
