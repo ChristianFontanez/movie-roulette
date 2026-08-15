@@ -90,28 +90,61 @@ async function searchMovies(query, signal) {
   }));
 }
 
-// Ratings are a nice-to-have: any failure just leaves them blank.
-async function fetchRatings(tmdbId) {
-  const out = { imdb_id: null, imdb_rating: null, rt_score: null };
-  if (!TMDB_KEY || !tmdbId) return out;
-  try {
-    const r = await fetch(
-      `https://api.themoviedb.org/3/movie/${tmdbId}/external_ids?api_key=${encodeURIComponent(TMDB_KEY)}`
-    );
-    if (r.ok) out.imdb_id = (await r.json()).imdb_id || null;
-  } catch (_) {}
+// TMDB only matches title prefixes, so a near-miss finds nothing. OMDb
+// indexes differently and often catches what TMDB misses.
+async function searchOMDbTitles(query, signal) {
+  if (!OMDB_KEY) return [];
+  const url =
+    `https://www.omdbapi.com/?apikey=${encodeURIComponent(OMDB_KEY)}` +
+    `&type=movie&s=${encodeURIComponent(query)}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) return [];
+  const json = await res.json();
+  if (!json || json.Response === "False") return [];
+  return (json.Search || []).slice(0, 6).map((r) => ({
+    imdb_id: r.imdbID,
+    title: r.Title,
+    year: r.Year ? String(r.Year).slice(0, 4) : null,
+    poster_url: r.Poster && r.Poster !== "N/A" ? r.Poster : null,
+  }));
+}
 
-  if (!OMDB_KEY || !out.imdb_id) return out;
+const omdbUrl = (params) =>
+  `https://www.omdbapi.com/?apikey=${encodeURIComponent(OMDB_KEY)}&${params}`;
+
+// Pull the ratings (and poster/year, when we don't already have them) for a
+// pick. Ratings are a nice-to-have: any failure just leaves them blank.
+async function fetchDetails(pick) {
+  const out = { imdb_id: pick.imdb_id || null, imdb_rating: null, rt_score: null };
+
+  // A TMDB pick doesn't carry an IMDb id, so translate it first.
+  if (!out.imdb_id && pick.tmdb_id && TMDB_KEY) {
+    try {
+      const r = await fetch(
+        `https://api.themoviedb.org/3/movie/${pick.tmdb_id}/external_ids?api_key=${encodeURIComponent(TMDB_KEY)}`
+      );
+      if (r.ok) out.imdb_id = (await r.json()).imdb_id || null;
+    } catch (_) {}
+  }
+  if (!OMDB_KEY) return out;
+
+  // By id when we have one, otherwise by title — which is how a hand-typed
+  // entry still picks up a poster and ratings.
+  const query = out.imdb_id
+    ? `i=${encodeURIComponent(out.imdb_id)}`
+    : `t=${encodeURIComponent(pick.title)}`;
   try {
-    const r = await fetch(
-      `https://www.omdbapi.com/?apikey=${encodeURIComponent(OMDB_KEY)}&i=${out.imdb_id}`
-    );
+    const r = await fetch(omdbUrl(query));
     if (!r.ok) return out;
     const j = await r.json();
     if (!j || j.Response === "False") return out;
     if (j.imdbRating && j.imdbRating !== "N/A") out.imdb_rating = j.imdbRating;
     const rt = (j.Ratings || []).find((x) => x.Source === "Rotten Tomatoes");
     if (rt && rt.Value) out.rt_score = rt.Value;
+    if (!out.imdb_id && j.imdbID) out.imdb_id = j.imdbID;
+    // Fill artwork/year only if the pick arrived without them.
+    if (!pick.poster_url && j.Poster && j.Poster !== "N/A") out.poster_url = j.Poster;
+    if (!pick.year && j.Year) out.year = String(j.Year).slice(0, 4);
   } catch (_) {}
   return out;
 }
@@ -286,15 +319,145 @@ function openMenu() {
   $("reset-pass").value = "";
   $("reset-msg").className = "small hidden";
   $("menu").classList.remove("hidden");
+  loadHistory();
 }
 function closeMenu() {
   $("menu").classList.add("hidden");
 }
+// --- past picks ---------------------------------------------------
+function parseYmd(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d); // local time, not UTC
+}
+
+async function loadHistory() {
+  const box = $("history");
+  box.innerHTML = `<div class="sr-note">Loading…</div>`;
+
+  const { data: spins, error } = await sb
+    .from("spins")
+    .select("*")
+    .lt("week_start", CUR_WEEK)
+    .order("week_start", { ascending: false });
+  if (error) {
+    box.innerHTML = "";
+    box.appendChild(noteEl(error.message));
+    return;
+  }
+  if (!spins || !spins.length) {
+    box.innerHTML = "";
+    box.appendChild(noteEl("No past picks yet — this is your first week!"));
+    return;
+  }
+
+  // Pull the winning movie rows for posters/ratings the spin didn't store,
+  // plus everything else that was on those wheels.
+  const weeks = spins.map((s) => s.week_start);
+  const { data: past } = await sb
+    .from("movies")
+    .select("*")
+    .in("week_start", weeks)
+    .order("created_at");
+  const byWeek = {};
+  (past || []).forEach((m) => (byWeek[m.week_start] = byWeek[m.week_start] || []).push(m));
+
+  box.innerHTML = "";
+  spins.forEach((s) => box.appendChild(historyRow(s, byWeek[s.week_start] || [])));
+}
+
+function noteEl(text) {
+  const d = document.createElement("div");
+  d.className = "sr-note";
+  d.textContent = text;
+  return d;
+}
+
+function historyRow(s, weekMovies) {
+  const won = weekMovies.find((m) => m.id === s.winning_movie_id);
+  const row = document.createElement("div");
+  row.className = "hist-item";
+
+  row.appendChild(posterEl(s.winning_poster_url || (won && won.poster_url), "hist-poster"));
+
+  const main = document.createElement("div");
+  main.className = "hist-main";
+  main.innerHTML = `<div class="hist-week"></div><div class="hist-title"></div><div class="hist-who"></div>`;
+  main.querySelector(".hist-week").textContent = prettyWeek(parseYmd(s.week_start));
+  main.querySelector(".hist-title").textContent = s.winning_title || "—";
+  main.querySelector(".hist-who").textContent = [
+    s.winning_year || (won && won.year),
+    s.winner_name ? `${s.winner_name}'s pick` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const badges = won ? ratingsEl(won) : null;
+  if (badges) main.appendChild(badges);
+
+  // The rest of that week's wheel, for context on what it beat.
+  const others = weekMovies.filter((m) => m.id !== s.winning_movie_id);
+  if (others.length) {
+    const also = document.createElement("div");
+    also.className = "hist-also";
+    also.textContent = `also on the wheel: ${others.map((m) => m.title).join(", ")}`;
+    main.appendChild(also);
+  }
+
+  row.appendChild(main);
+  return row;
+}
+
 function setupMenu() {
   $("menu-btn").onclick = openMenu;
   $("menu-close").onclick = closeMenu;
   $("menu-backdrop").onclick = closeMenu;
   $("reset-form").onsubmit = onReset;
+  $("backfill-btn").onclick = onBackfill;
+}
+
+// Fill in posters/ratings for movies that were typed rather than picked
+// from search. Looked up by title, so obscure spellings may not resolve.
+async function onBackfill() {
+  const btn = $("backfill-btn");
+  const msg = $("backfill-msg");
+  btn.disabled = true;
+  msg.className = "small muted";
+  msg.textContent = "Looking things up…";
+
+  const { data: rows, error } = await sb
+    .from("movies")
+    .select("*")
+    .is("poster_url", null)
+    .limit(25);
+  if (error) {
+    msg.className = "small bad";
+    msg.textContent = error.message;
+    btn.disabled = false;
+    return;
+  }
+  if (!rows || !rows.length) {
+    msg.className = "small ok";
+    msg.textContent = "Everything already has artwork. 🎉";
+    btn.disabled = false;
+    return;
+  }
+
+  let filled = 0;
+  for (const m of rows) {
+    const details = await fetchDetails(m);
+    const patch = Object.fromEntries(Object.entries(details).filter(([, v]) => v));
+    if (!Object.keys(patch).length) continue;
+    const { error: upErr } = await sb.from("movies").update(patch).eq("id", m.id);
+    if (!upErr) filled++;
+  }
+
+  msg.className = filled ? "small ok" : "small muted";
+  msg.textContent = filled
+    ? `Updated ${filled} of ${rows.length} movie${rows.length > 1 ? "s" : ""}.`
+    : `Couldn't find details for ${rows.length === 1 ? "that movie" : "those movies"}.`;
+  btn.disabled = false;
+  await reload();
+  loadHistory();
 }
 
 async function onReset(e) {
@@ -446,12 +609,20 @@ function setupSearch() {
 
 async function runSearch(q) {
   searchAbort = new AbortController();
+  const signal = searchAbort.signal;
   try {
-    const results = await searchMovies(q, searchAbort.signal);
+    let results = await searchMovies(q, signal);
+    if (!results.length) results = await searchOMDbTitles(q, signal); // fallback
     if ($("movie-title").value.trim() !== q) return; // stale
     renderResults(results, q);
   } catch (err) {
     if (err.name === "AbortError") return;
+    // TMDB failed outright — try the other provider before giving up.
+    try {
+      const results = await searchOMDbTitles(q, signal);
+      if ($("movie-title").value.trim() !== q) return;
+      return renderResults(results, q);
+    } catch (_) {}
     renderResults([], q, "Couldn't reach the movie database.");
   }
 }
@@ -523,6 +694,7 @@ async function addMovie(pick) {
     year: pick.year || null,
     poster_url: pick.poster_url || null,
     tmdb_id: pick.tmdb_id || null,
+    imdb_id: pick.imdb_id || null,
   };
   const { data, error } = await sb.from("movies").insert(row).select("*").maybeSingle();
   if (error) {
@@ -531,11 +703,12 @@ async function addMovie(pick) {
   }
   await reload(); // show it right away…
 
-  // …then fill in ratings in the background.
-  if (!pick.tmdb_id || !data) return;
-  const ratings = await fetchRatings(pick.tmdb_id);
-  if (!ratings.imdb_rating && !ratings.rt_score) return;
-  await sb.from("movies").update(ratings).eq("id", data.id);
+  // …then fill in ratings (and any missing artwork) in the background.
+  if (!data) return;
+  const details = await fetchDetails(pick);
+  const patch = Object.fromEntries(Object.entries(details).filter(([, v]) => v));
+  if (!Object.keys(patch).length) return;
+  await sb.from("movies").update(patch).eq("id", data.id);
   await reload();
 }
 
