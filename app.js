@@ -62,6 +62,60 @@ function prettyWeek(monday) {
 const nowMonday = mondayOf(new Date());
 const CUR_WEEK = ymd(nowMonday);
 
+// ------------------------------------------------------------------
+// Movie lookup: TMDB for search/posters, OMDb for IMDb + RT scores.
+// Both are optional — without keys the app still takes typed titles.
+// ------------------------------------------------------------------
+const TMDB_KEY = usableKey(CFG.TMDB_API_KEY);
+const OMDB_KEY = usableKey(CFG.OMDB_API_KEY);
+const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
+
+function usableKey(k) {
+  return k && !k.includes("__") ? k : null;
+}
+
+async function searchMovies(query, signal) {
+  if (!TMDB_KEY) return [];
+  const url =
+    `https://api.themoviedb.org/3/search/movie?api_key=${encodeURIComponent(TMDB_KEY)}` +
+    `&include_adult=false&query=${encodeURIComponent(query)}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`TMDB ${res.status}`);
+  const json = await res.json();
+  return (json.results || []).slice(0, 6).map((r) => ({
+    tmdb_id: r.id,
+    title: r.title,
+    year: r.release_date ? r.release_date.slice(0, 4) : null,
+    poster_url: r.poster_path ? TMDB_IMG + r.poster_path : null,
+  }));
+}
+
+// Ratings are a nice-to-have: any failure just leaves them blank.
+async function fetchRatings(tmdbId) {
+  const out = { imdb_id: null, imdb_rating: null, rt_score: null };
+  if (!TMDB_KEY || !tmdbId) return out;
+  try {
+    const r = await fetch(
+      `https://api.themoviedb.org/3/movie/${tmdbId}/external_ids?api_key=${encodeURIComponent(TMDB_KEY)}`
+    );
+    if (r.ok) out.imdb_id = (await r.json()).imdb_id || null;
+  } catch (_) {}
+
+  if (!OMDB_KEY || !out.imdb_id) return out;
+  try {
+    const r = await fetch(
+      `https://www.omdbapi.com/?apikey=${encodeURIComponent(OMDB_KEY)}&i=${out.imdb_id}`
+    );
+    if (!r.ok) return out;
+    const j = await r.json();
+    if (!j || j.Response === "False") return out;
+    if (j.imdbRating && j.imdbRating !== "N/A") out.imdb_rating = j.imdbRating;
+    const rt = (j.Ratings || []).find((x) => x.Source === "Rotten Tomatoes");
+    if (rt && rt.Value) out.rt_score = rt.Value;
+  } catch (_) {}
+  return out;
+}
+
 // Deterministic pleasant colors so the wheel looks the same for everyone
 const COLORS = [
   "#ff4d6d", "#7c5cff", "#3ddc97", "#ffd76b", "#4dc9ff",
@@ -219,6 +273,7 @@ async function startApp() {
   $("add-movie-form").onsubmit = onAddMovie;
   $("spin-btn").onclick = onSpin;
   setupMenu();
+  setupSearch();
 
   await reload();
   subscribeRealtime();
@@ -292,6 +347,44 @@ function render() {
   seenFirstRender = true;
 }
 
+// Poster image, or a film-reel placeholder when we have no artwork.
+function posterEl(url, cls) {
+  if (!url) {
+    const ph = document.createElement("div");
+    ph.className = `${cls} placeholder`;
+    ph.textContent = "🎬";
+    return ph;
+  }
+  const img = document.createElement("img");
+  img.className = cls;
+  img.src = url;
+  img.alt = "";
+  img.loading = "lazy";
+  return img;
+}
+
+// IMDb / Rotten Tomatoes badges, or null when we have neither.
+function ratingsEl(m) {
+  if (!m.imdb_rating && !m.rt_score) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "ratings";
+  if (m.imdb_rating) {
+    const b = document.createElement("span");
+    b.className = "badge imdb";
+    b.textContent = `★ ${m.imdb_rating}`;
+    b.title = "IMDb rating";
+    wrap.appendChild(b);
+  }
+  if (m.rt_score) {
+    const b = document.createElement("span");
+    b.className = "badge rt";
+    b.textContent = `🍅 ${m.rt_score}`;
+    b.title = "Rotten Tomatoes";
+    wrap.appendChild(b);
+  }
+  return wrap;
+}
+
 function renderMovieList() {
   const ul = $("movie-list");
   ul.innerHTML = "";
@@ -305,15 +398,16 @@ function renderMovieList() {
   movies.forEach((m, idx) => {
     const li = document.createElement("li");
     li.className = "movie-item";
-    const dot = document.createElement("span");
-    dot.className = "movie-dot";
-    dot.style.background = colorFor(idx);
+    li.style.borderLeftColor = colorFor(idx); // matches its wheel segment
+    li.appendChild(posterEl(m.poster_url, "movie-poster"));
     const main = document.createElement("div");
     main.className = "movie-main";
     main.innerHTML = `<div class="movie-name"></div><div class="movie-owner"></div>`;
     main.querySelector(".movie-name").textContent = m.title;
-    main.querySelector(".movie-owner").textContent = playerName(m.owner_id);
-    li.appendChild(dot);
+    main.querySelector(".movie-owner").textContent =
+      [m.year, playerName(m.owner_id)].filter(Boolean).join(" · ");
+    const badges = ratingsEl(m);
+    if (badges) main.appendChild(badges);
     li.appendChild(main);
     const del = document.createElement("button");
     del.className = "movie-del";
@@ -327,16 +421,121 @@ function renderMovieList() {
   });
 }
 
+// --- typeahead ----------------------------------------------------
+let searchTimer = null;
+let searchAbort = null;
+
+function setupSearch() {
+  const input = $("movie-title");
+  if (!TMDB_KEY) {
+    input.placeholder = "Add a movie…";
+    return;
+  }
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    clearTimeout(searchTimer);
+    if (searchAbort) searchAbort.abort();
+    if (q.length < 2) return closeResults();
+    searchTimer = setTimeout(() => runSearch(q), 300);
+  });
+  // Close the dropdown when tapping elsewhere
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".add-wrap")) closeResults();
+  });
+}
+
+async function runSearch(q) {
+  searchAbort = new AbortController();
+  try {
+    const results = await searchMovies(q, searchAbort.signal);
+    if ($("movie-title").value.trim() !== q) return; // stale
+    renderResults(results, q);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    renderResults([], q, "Couldn't reach the movie database.");
+  }
+}
+
+function closeResults() {
+  $("search-results").classList.add("hidden");
+  $("movie-title").setAttribute("aria-expanded", "false");
+}
+
+function renderResults(results, q, note) {
+  const box = $("search-results");
+  box.innerHTML = "";
+  if (!results.length) {
+    const p = document.createElement("div");
+    p.className = "sr-note";
+    p.textContent = note || `No matches. Tap Add to save “${q}” as typed.`;
+    box.appendChild(p);
+  }
+  results.forEach((r) => {
+    const b = document.createElement("button");
+    b.className = "sr-item";
+    b.type = "button";
+    b.setAttribute("role", "option");
+    if (r.poster_url) {
+      const img = document.createElement("img");
+      img.className = "sr-poster";
+      img.src = r.poster_url;
+      img.alt = "";
+      img.loading = "lazy";
+      b.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "sr-poster placeholder";
+      ph.textContent = "🎬";
+      b.appendChild(ph);
+    }
+    const main = document.createElement("div");
+    main.className = "sr-main";
+    main.innerHTML = `<div class="sr-title"></div><div class="sr-year"></div>`;
+    main.querySelector(".sr-title").textContent = r.title;
+    main.querySelector(".sr-year").textContent = r.year || "";
+    b.appendChild(main);
+    b.onclick = () => addMovie(r);
+    box.appendChild(b);
+  });
+  box.classList.remove("hidden");
+  $("movie-title").setAttribute("aria-expanded", "true");
+}
+
+// --- adding -------------------------------------------------------
 async function onAddMovie(e) {
   e.preventDefault();
-  const input = $("movie-title");
-  const title = input.value.trim();
+  const title = $("movie-title").value.trim();
   if (!title) return;
-  input.value = "";
-  const { error } = await sb
-    .from("movies")
-    .insert({ title, owner_id: me.id, week_start: CUR_WEEK });
-  if (error) alert(error.message);
+  // Submitting the form saves exactly what was typed.
+  addMovie({ title });
+}
+
+async function addMovie(pick) {
+  clearTimeout(searchTimer);
+  if (searchAbort) searchAbort.abort();
+  $("movie-title").value = "";
+  closeResults();
+
+  const row = {
+    title: pick.title,
+    owner_id: me.id,
+    week_start: CUR_WEEK,
+    year: pick.year || null,
+    poster_url: pick.poster_url || null,
+    tmdb_id: pick.tmdb_id || null,
+  };
+  const { data, error } = await sb.from("movies").insert(row).select("*").maybeSingle();
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  await reload(); // show it right away…
+
+  // …then fill in ratings in the background.
+  if (!pick.tmdb_id || !data) return;
+  const ratings = await fetchRatings(pick.tmdb_id);
+  if (!ratings.imdb_rating && !ratings.rt_score) return;
+  await sb.from("movies").update(ratings).eq("id", data.id);
   await reload();
 }
 
@@ -461,10 +660,23 @@ function showResult() {
     <div class="win-tag">This week we're watching</div>
     <div class="win-title"></div>
     <div class="win-owner"></div>`;
+
+  const poster = spin.winning_poster_url;
+  if (poster) el.insertBefore(posterEl(poster, "win-poster"), el.children[1]);
+
   el.querySelector(".win-title").textContent = spin.winning_title || "—";
-  el.querySelector(".win-owner").textContent = spin.winner_name
-    ? `${spin.winner_name}'s pick`
-    : "";
+  el.querySelector(".win-owner").textContent = [
+    spin.winning_year,
+    spin.winner_name ? `${spin.winner_name}'s pick` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  // Pull ratings off the winning movie if it's still in this week's list.
+  const won = movies.find((m) => m.id === spin.winning_movie_id);
+  const badges = won ? ratingsEl(won) : null;
+  if (badges) el.appendChild(badges);
+
   show("result");
 }
 
@@ -479,6 +691,8 @@ async function onSpin() {
     winner_player_id: w.owner_id,
     winning_title: w.title,
     winner_name: playerName(w.owner_id),
+    winning_poster_url: w.poster_url || null,
+    winning_year: w.year || null,
   };
   $("spin-btn").disabled = true;
   const { data, error } = await sb.from("spins").insert(row).select("*").maybeSingle();

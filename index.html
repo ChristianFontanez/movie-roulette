@@ -72,17 +72,24 @@
       <!-- This week's movies -->
       <section class="card">
         <h2>This week's movies</h2>
-        <form id="add-movie-form" class="row">
-          <input id="movie-title" type="text" autocomplete="off" maxlength="80"
-                 placeholder="Add a movie…" aria-label="Movie title" />
-          <button class="btn primary" type="submit">Add</button>
-        </form>
+        <div class="add-wrap">
+          <form id="add-movie-form" class="row">
+            <input id="movie-title" type="text" autocomplete="off" maxlength="80"
+                   placeholder="Search for a movie…" aria-label="Movie title"
+                   role="combobox" aria-expanded="false" aria-controls="search-results" />
+            <button class="btn primary" type="submit">Add</button>
+          </form>
+          <div id="search-results" class="search-results hidden" role="listbox"></div>
+        </div>
         <ul id="movie-list" class="movie-list"></ul>
       </section>
     </main>
 
     <footer class="footer muted small">
-      Everyone sees the same wheel, live.
+      Everyone sees the same wheel, live.<br />
+      Movie data from <a class="footer-link" href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>
+      &amp; <a class="footer-link" href="https://www.omdbapi.com/" target="_blank" rel="noopener">OMDb</a>.
+      This product uses the TMDB API but is not endorsed or certified by TMDB.
     </footer>
 
     <!-- Menu / settings -->
