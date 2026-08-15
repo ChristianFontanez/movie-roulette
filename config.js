@@ -14,9 +14,9 @@ window.MOVIE_ROULETTE_CONFIG = {
 
   // themoviedb.org → Settings → API → "API Key (v3 auth)"
   // Powers movie search, posters, and release years.
-  TMDB_API_KEY: "__TMDB_API_KEY__",
+  TMDB_API_KEY: "449a0a90b4b7404c5307c277b47bc838",
 
   // omdbapi.com/apikey.aspx → free key, arrives by email
   // Powers the IMDb rating and Rotten Tomatoes score.
-  OMDB_API_KEY: "__OMDB_API_KEY__",
+  OMDB_API_KEY: "aea17d8",
 };
