@@ -8,8 +8,8 @@ and results sync live for everyone.
 - Everyone picks/creates their name (saved on their device).
 - Each week, people add movies (tagged with who added them).
 - Anyone can spin the wheel — it lands on one of *this week's* movies, live on
-  every phone at once.
-- The owner of the winning movie **sits out next week only**, then they're back.
+  every phone at once. The winner is only revealed once the wheel stops.
+- Every movie is always eligible; there are no sit-out restrictions.
 
 Access is gated by a shared group **passphrase** (the first person to open the
 app sets it).

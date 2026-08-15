@@ -61,9 +61,6 @@ function prettyWeek(monday) {
 
 const nowMonday = mondayOf(new Date());
 const CUR_WEEK = ymd(nowMonday);
-const prevMonday = new Date(nowMonday);
-prevMonday.setDate(prevMonday.getDate() - 7);
-const PREV_WEEK = ymd(prevMonday);
 
 // Deterministic pleasant colors so the wheel looks the same for everyone
 const COLORS = [
@@ -79,10 +76,12 @@ let me = null; // { id, name }
 let players = [];
 let movies = []; // this week's movies
 let spin = null; // this week's spin row (or null)
-let excludedPlayerId = null; // won last week → sits out this week
 let rotation = 0; // current wheel rotation (radians)
 let animating = false;
 let lastAnimatedSpinId = null;
+// A spin already on the books when we open the app is shown at rest; only a
+// spin that lands while we're watching gets the suspense animation.
+let seenFirstRender = false;
 
 // ------------------------------------------------------------------
 // Passphrase gate
@@ -273,16 +272,7 @@ async function onReset(e) {
 }
 
 async function reload() {
-  const [pRes, mRes, sRes, prevRes] = await Promise.all([
-    sb.from("players").select("id,name").order("name"),
-    sb.from("movies").select("*").eq("week_start", CUR_WEEK).order("created_at"),
-    sb.from("spins").select("*").eq("week_start", CUR_WEEK).maybeSingle(),
-    sb.from("spins").select("winner_player_id").eq("week_start", PREV_WEEK).maybeSingle(),
-  ]);
-  players = pRes.data || [];
-  movies = mRes.data || [];
-  spin = sRes.data || null;
-  excludedPlayerId = prevRes.data ? prevRes.data.winner_player_id : null;
+  await reloadDataOnly();
   render();
 }
 
@@ -291,24 +281,15 @@ function playerName(id) {
   return p ? p.name : "Someone";
 }
 
-// Movies eligible for the wheel (stable order = same for everyone)
+// Movies on the wheel (stable order = same for everyone)
 function eligibleMovies() {
-  return movies.filter((m) => m.owner_id !== excludedPlayerId);
+  return movies;
 }
 
 function render() {
-  renderSittingOut();
   renderMovieList();
   renderWheelState();
-}
-
-function renderSittingOut() {
-  const el = $("sitting-out");
-  if (excludedPlayerId) {
-    el.textContent = `🚫 ${playerName(excludedPlayerId)} sits out this week (won last week)`;
-  } else {
-    el.textContent = "";
-  }
+  seenFirstRender = true;
 }
 
 function renderMovieList() {
@@ -321,20 +302,17 @@ function renderMovieList() {
     ul.appendChild(li);
     return;
   }
-  const elig = eligibleMovies();
-  movies.forEach((m) => {
-    const idx = elig.findIndex((e) => e.id === m.id);
+  movies.forEach((m, idx) => {
     const li = document.createElement("li");
-    li.className = "movie-item" + (idx === -1 ? " excluded" : "");
+    li.className = "movie-item";
     const dot = document.createElement("span");
     dot.className = "movie-dot";
-    dot.style.background = idx === -1 ? "#555" : colorFor(idx);
+    dot.style.background = colorFor(idx);
     const main = document.createElement("div");
     main.className = "movie-main";
     main.innerHTML = `<div class="movie-name"></div><div class="movie-owner"></div>`;
     main.querySelector(".movie-name").textContent = m.title;
-    main.querySelector(".movie-owner").textContent =
-      playerName(m.owner_id) + (m.owner_id === excludedPlayerId ? " · sitting out" : "");
+    main.querySelector(".movie-owner").textContent = playerName(m.owner_id);
     li.appendChild(dot);
     li.appendChild(main);
     const del = document.createElement("button");
@@ -445,19 +423,22 @@ function renderWheelState() {
   if (spin) {
     // Resolve the winning movie's index in the eligible order
     const idx = elig.findIndex((m) => m.id === spin.winning_movie_id);
-    if (idx >= 0 && lastAnimatedSpinId !== spin.id && !animating) {
-      // freshly observed spin → animate to it
+    if (idx >= 0 && lastAnimatedSpinId !== spin.id && !animating && seenFirstRender) {
+      // A spin landed while we're watching → animate to it. The result stays
+      // hidden until the wheel stops; animateToWinner reveals it at the end.
       animateToWinner(idx, elig.length, spin.id);
-    } else if (idx >= 0 && lastAnimatedSpinId === spin.id) {
+      return;
+    }
+    if (idx >= 0) {
+      // Already-decided week (or we just opened the app): sit at the result.
+      lastAnimatedSpinId = spin.id;
       rotation = finalRotationFor(idx, elig.length, rotation) % TWO_PI;
       drawWheel(rotation);
     } else if (idx < 0) {
       drawWheel(rotation);
     }
-    showResult();
-    $("spin-btn").disabled = true;
-    $("spin-btn").textContent = "Spun for this week 🎉";
-    $("spin-note").textContent = "Come back next week for another spin.";
+    if (animating) return; // spin still in flight — don't reveal early
+    settleOnResult();
     return;
   }
 
@@ -467,9 +448,7 @@ function renderWheelState() {
   $("spin-btn").disabled = !canSpin;
   $("spin-btn").textContent = "Spin the wheel";
   if (elig.length === 0) {
-    $("spin-note").textContent = movies.length
-      ? "Everyone with movies is sitting out this week."
-      : "Add movies to spin.";
+    $("spin-note").textContent = "Add movies to spin.";
   } else {
     $("spin-note").textContent = `${elig.length} movie${elig.length > 1 ? "s" : ""} on the wheel`;
   }
@@ -484,7 +463,7 @@ function showResult() {
     <div class="win-owner"></div>`;
   el.querySelector(".win-title").textContent = spin.winning_title || "—";
   el.querySelector(".win-owner").textContent = spin.winner_name
-    ? `${spin.winner_name}'s pick · sits out next week`
+    ? `${spin.winner_name}'s pick`
     : "";
   show("result");
 }
@@ -513,9 +492,22 @@ async function onSpin() {
 }
 
 function animateToWinner(winIndex, n, spinId) {
-  animating = true;
   lastAnimatedSpinId = spinId;
+  // Nobody is watching a backgrounded tab, and animation frames don't run
+  // there — settle on the result instead of sitting on "Spinning…".
+  if (document.hidden) {
+    rotation = finalRotationFor(winIndex, n, rotation) % TWO_PI;
+    drawWheel(rotation);
+    animating = false;
+    settleOnResult();
+    return;
+  }
+  animating = true;
+  // Keep the winner secret until the wheel comes to rest.
+  hide("result");
   $("spin-btn").disabled = true;
+  $("spin-btn").textContent = "Spinning…";
+  $("spin-note").textContent = "🥁 And the winner is…";
   const start = rotation;
   const end = finalRotationFor(winIndex, n, start);
   const dur = 4600;
@@ -530,12 +522,18 @@ function animateToWinner(winIndex, n, spinId) {
     } else {
       rotation = end % TWO_PI;
       animating = false;
-      showResult();
-      $("spin-btn").textContent = "Spun for this week 🎉";
-      $("spin-note").textContent = "Come back next week for another spin.";
+      settleOnResult();
     }
   }
   requestAnimationFrame(frame);
+}
+
+// Reveal the winner and put the controls in their "already spun" state.
+function settleOnResult() {
+  showResult();
+  $("spin-btn").disabled = true;
+  $("spin-btn").textContent = "Spun for this week 🎉";
+  $("spin-note").textContent = "Come back next week for another spin.";
 }
 
 // ------------------------------------------------------------------
@@ -567,16 +565,14 @@ async function onRemoteChange() {
 }
 
 async function reloadDataOnly() {
-  const [pRes, mRes, sRes, prevRes] = await Promise.all([
+  const [pRes, mRes, sRes] = await Promise.all([
     sb.from("players").select("id,name").order("name"),
     sb.from("movies").select("*").eq("week_start", CUR_WEEK).order("created_at"),
     sb.from("spins").select("*").eq("week_start", CUR_WEEK).maybeSingle(),
-    sb.from("spins").select("winner_player_id").eq("week_start", PREV_WEEK).maybeSingle(),
   ]);
   players = pRes.data || [];
   movies = mRes.data || [];
   spin = sRes.data || null;
-  excludedPlayerId = prevRes.data ? prevRes.data.winner_player_id : null;
 }
 
 // ------------------------------------------------------------------
