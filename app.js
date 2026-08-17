@@ -211,20 +211,42 @@ let seenFirstRender = false;
 // ------------------------------------------------------------------
 // Passphrase gate
 // ------------------------------------------------------------------
+// A failed read and "no passphrase set yet" are very different things: the
+// first must never be mistaken for the second, or a flaky connection would
+// invite someone to set a new group passphrase over the real one.
 async function getStoredHash() {
-  const { data } = await sb
+  const { data, error } = await sb
     .from("app_config")
     .select("value")
     .eq("key", "passphrase_hash")
     .maybeSingle();
-  return data ? data.value : null;
+  if (error) return { ok: false, value: null, error };
+  return { ok: true, value: data ? data.value : null };
 }
 
 async function initGate() {
-  const stored = await getStoredHash();
   const gateSub = $("gate-sub");
   const err = $("gate-error");
   err.classList.add("hidden");
+
+  const res = await getStoredHash();
+  if (!res.ok) {
+    // Couldn't reach the database — offer a retry, never the setup screen.
+    gateSub.textContent = "Can't reach the movie list right now.";
+    $("gate-input").classList.add("hidden");
+    const btn = $("gate-form").querySelector("button");
+    btn.textContent = "Try again";
+    only("gate");
+    showErr(err, "Check your connection and try again.");
+    $("gate-form").onsubmit = (e) => {
+      e.preventDefault();
+      $("gate-input").classList.remove("hidden");
+      initGate();
+    };
+    return;
+  }
+  $("gate-input").classList.remove("hidden");
+  const stored = res.value;
 
   // Already unlocked on this device and passphrase unchanged?
   if (stored && localStorage.getItem(LS_UNLOCK) === stored) {
@@ -247,10 +269,16 @@ async function initGate() {
     const hash = await sha256(val);
 
     if (firstTime) {
+      // insert, not upsert: if someone set a passphrase in the meantime this
+      // fails on the primary key instead of quietly replacing theirs.
       const { error } = await sb
         .from("app_config")
-        .upsert({ key: "passphrase_hash", value: hash });
-      if (error) return showErr(err, error.message);
+        .insert({ key: "passphrase_hash", value: hash });
+      if (error) {
+        showErr(err, "Someone just set a passphrase — ask them for it.");
+        $("gate-input").value = "";
+        return initGate();
+      }
       localStorage.setItem(LS_UNLOCK, hash);
       return afterUnlock();
     }
@@ -634,7 +662,12 @@ async function onReset(e) {
 
   const hash = await sha256(val);
   const stored = await getStoredHash();
-  if (!stored || hash !== stored) {
+  if (!stored.ok) {
+    msg.textContent = "Couldn't reach the database — try again.";
+    msg.className = "small bad";
+    return;
+  }
+  if (!stored.value || hash !== stored.value) {
     msg.textContent = "That passphrase doesn't match.";
     msg.className = "small bad";
     return;
@@ -673,12 +706,21 @@ async function maybeCarryOver() {
     .insert({ key: claimKey, value: new Date().toISOString() });
   if (claimErr) return false; // another device already handled it
 
-  const { data: prevMovies } = await sb
+  // From here on the claim is held, so every exit has to either finish the
+  // copy or hand the claim back. Dropping it on the floor would skip this
+  // week's carry-over permanently, with nothing on screen to explain why.
+  const release = async () => {
+    await sb.from("app_config").delete().eq("key", claimKey);
+    return false;
+  };
+
+  const { data: prevMovies, error: prevErr } = await sb
     .from("movies")
     .select("*")
     .eq("week_start", PREV_WEEK)
     .order("created_at");
-  if (!prevMovies || !prevMovies.length) return false;
+  if (prevErr) return release(); // couldn't read last week — try again later
+  if (!prevMovies || !prevMovies.length) return false; // genuinely nothing to carry
 
   // Anything you didn't actually watch gets another shot — including the
   // ones the wheel picked but the group passed on.
@@ -700,10 +742,11 @@ async function maybeCarryOver() {
       carried_over: true,
       status: "pending",
     }));
-  if (!rollovers.length) return false;
+  if (!rollovers.length) return false; // everything last week was watched
 
   const { error } = await sb.from("movies").insert(rollovers);
-  return !error;
+  if (error) return release(); // copy failed — let the next open retry
+  return true;
 }
 
 async function reload() {
