@@ -46,6 +46,13 @@ iOS / Android (Expo)
 Shared: this roadmap, this vault, the issue tracker, and the data model's shape.
 Not shared: code, deploys, databases, or release cycles.
 
+### Why not one repo with two pipelines
+
+Pages publishes from `main` root, so anything committed here is served publicly —
+an Expo project in this repo would put its config files on the live site. The full
+reasoning, and the three deployment paths this project ends up with, are in
+[[ADR 0001 Mobile Stack]].
+
 The temptation will be to "just point the mobile app at the existing database to
 save time". Don't — that couples an experimental app to the one the group relies
 on weekly, and forces the auth migration to happen under time pressure.
