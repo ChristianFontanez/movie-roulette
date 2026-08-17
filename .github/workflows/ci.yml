@@ -1,4 +1,4 @@
-name: CI
+name: CI & Deploy
 
 on:
   push:
@@ -10,6 +10,9 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   checks:
@@ -34,3 +37,31 @@ jobs:
       - run: npm init -y && npm i --no-save playwright
       - run: npx playwright install --with-deps chromium
       - run: node scripts/smoke.mjs
+
+  deploy:
+    name: Deploy to Pages
+    # The whole point: a broken push never reaches anyone's phone.
+    needs: [checks, smoke]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Never cancel a deploy midway — a half-published site is worse than a
+    # slightly stale one.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      # Publishes the repo as-is, matching what legacy Pages served, so no
+      # URL anyone has bookmarked or printed on a QR poster changes.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
