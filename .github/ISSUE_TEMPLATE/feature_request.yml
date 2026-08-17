@@ -1,0 +1,46 @@
+name: 💡 Feature request
+description: Suggest something for Movie Roulette
+labels: ["type:feature", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas from movie night are the best ideas. Fill in whatever you know —
+        nothing here is required except the first box.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should it do?
+      description: Plain language is perfect. "I want to know how long the movie is before we commit."
+      placeholder: I wish the app would…
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where?
+      options:
+        - The website we use now
+        - The phone app (when it exists)
+        - Both
+        - Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why does it matter?
+      description: What happens today that's annoying, or what would this make better?
+    validations:
+      required: false
+
+  - type: input
+    id: who
+    attributes:
+      label: Who's asking?
+      description: Your name, so credit lands in the right place when it ships.
+    validations:
+      required: false

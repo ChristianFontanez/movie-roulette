@@ -1,2 +1,5 @@
 node_modules/
 .DS_Store
+
+# Obsidian workspace (personal, not shared)
+.obsidian/

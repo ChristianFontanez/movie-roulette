@@ -1,0 +1,39 @@
+name: 🐛 Something's broken
+description: Report something that doesn't work
+labels: ["type:bug", "status:triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      placeholder: I tapped the gear icon and nothing opened…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: false
+
+  - type: input
+    id: device
+    attributes:
+      label: Phone / browser
+      description: e.g. "Pixel 7 Pro, Firefox" or "iPhone 14, Safari". Helps a lot — some bugs only happen on one browser.
+      placeholder: Pixel 7 Pro, Firefox
+    validations:
+      required: false
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Does it happen every time?
+      options:
+        - Every time
+        - Sometimes
+        - Only happened once
+        - Not sure
+    validations:
+      required: false

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 🎬 Just use the app
+    url: https://christianfontanez.github.io/movie-roulette/
+    about: No GitHub account? Open the ⚙️ menu in the app and file your idea there instead.
+  - name: 🗺️ Roadmap
+    url: https://github.com/ChristianFontanez/movie-roulette/blob/main/ROADMAP.md
+    about: See what's planned before suggesting something — it may already be on the list.
