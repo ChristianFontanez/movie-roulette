@@ -26,6 +26,14 @@ html, body {
 
 .hidden { display: none !important; }
 
+/* Offline notice ----------------------------------------------- */
+.offline-bar {
+  position: sticky; top: 0; z-index: 30;
+  padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+  background: #4a3a1a; color: var(--gold);
+  font-size: 13px; font-weight: 600; text-align: center;
+}
+
 /* Screens ------------------------------------------------------ */
 .screen {
   min-height: 100dvh;

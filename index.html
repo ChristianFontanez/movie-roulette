@@ -7,10 +7,15 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Movie Roulette</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%A5%3C/text%3E%3C/svg%3E" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-title" content="Roulette" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="offline-bar" class="offline-bar hidden">📡 Offline — showing the last thing we saw</div>
+
   <!-- Passphrase gate ------------------------------------------------ -->
   <div id="gate" class="screen hidden">
     <div class="card gate-card">
@@ -99,6 +104,14 @@
       <div class="modal-card">
         <button id="menu-close" class="modal-close" aria-label="Close menu">✕</button>
         <h2>Menu</h2>
+
+        <div id="install-section" class="menu-section hidden">
+          <h3>📲 Add to home screen</h3>
+          <p id="install-help" class="muted small">
+            Get an app icon on your phone — opens full screen, no browser bars.
+          </p>
+          <button id="install-btn" class="btn hidden" type="button">Add to home screen</button>
+        </div>
 
         <div class="menu-section">
           <h3>🔄 Reset this week</h3>

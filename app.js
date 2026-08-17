@@ -1399,7 +1399,73 @@ async function reloadDataOnly() {
 }
 
 // ------------------------------------------------------------------
+// Installability + offline
+// ------------------------------------------------------------------
+const isStandalone = () =>
+  window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+function setupInstall() {
+  const section = $("install-section");
+  const btn = $("install-btn");
+  const help = $("install-help");
+  if (isStandalone()) return; // already installed — nothing to offer
+
+  // Chrome/Android hands us the prompt; we save it for the menu button.
+  let deferred = null;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e;
+    section.classList.remove("hidden");
+    btn.classList.remove("hidden");
+  });
+  btn.onclick = async () => {
+    if (!deferred) return;
+    btn.disabled = true;
+    deferred.prompt();
+    const { outcome } = await deferred.userChoice;
+    deferred = null;
+    btn.disabled = false;
+    if (outcome === "accepted") section.classList.add("hidden");
+  };
+  window.addEventListener("appinstalled", () => section.classList.add("hidden"));
+
+  // iOS has no prompt API — Safari can only be told how to do it by hand.
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua)) {
+    help.textContent = "Tap the Share button, then “Add to Home Screen”.";
+    section.classList.remove("hidden");
+  }
+}
+
+function setupOfflineBanner() {
+  const bar = $("offline-bar");
+  const sync = () => bar.classList.toggle("hidden", navigator.onLine);
+  window.addEventListener("online", () => {
+    sync();
+    reload(); // catch up on anything missed while disconnected
+  });
+  window.addEventListener("offline", sync);
+  sync();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  const go = () =>
+    navigator.serviceWorker.register("sw.js").catch(() => {
+      /* offline support is a bonus; the app works fine without it */
+    });
+  // Hold off until the page has settled so it doesn't compete with the first
+  // render — but this module imports from a CDN and frequently runs *after*
+  // load has already fired, in which case the listener would never run.
+  if (document.readyState === "complete") go();
+  else window.addEventListener("load", go, { once: true });
+}
+
+// ------------------------------------------------------------------
 // Go
 // ------------------------------------------------------------------
 drawWheel(0);
+setupInstall();
+setupOfflineBanner();
+registerServiceWorker();
 initGate();
