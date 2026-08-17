@@ -29,13 +29,14 @@ jobs:
   smoke:
     name: Boots in a browser
     runs-on: ubuntu-latest
+    # Playwright's own image ships the browser and its system libraries.
+    # Installing them on a bare runner means `apt-get` under sudo, which
+    # hangs often enough to be useless as a deploy gate.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm init -y && npm i --no-save playwright
-      - run: npx playwright install --with-deps chromium
+      - run: npm init -y && npm i --no-save playwright@1.62.1
       - run: node scripts/smoke.mjs
 
   deploy:
