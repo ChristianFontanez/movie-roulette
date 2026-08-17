@@ -19,7 +19,7 @@ isolated.
 
 | # | Milestone | Track | Goal |
 | --- | --- | --- | --- |
-| M1 | **web-1.1 — Wine & Requests** | Web | The two features the group asked for |
+| M1 | **web-1.1 — Feature Requests** | Web | Let friends file ideas from their phones |
 | M2 | **web-1.2 — Depth & Polish** | Web | Richer movie data, group stats |
 | M3 | **mobile-0.1 — Skeleton** | Mobile | Expo app runs, real accounts work |
 | M4 | **mobile-0.2 — Parity** | Mobile | Everything the web app does |
@@ -29,15 +29,21 @@ isolated.
 
 ---
 
-## M1 · web-1.1 — Wine & Requests
+## M1 · web-1.1 — Feature Requests
 
-The group's two explicit asks, both cheap on the web track.
+- **Feature requests** — friends can file ideas from inside the app, without a
+  GitHub account. See [[Feature Requests]].
+- **Rotate the exposed Supabase secret key** — overdue housekeeping.
 
-- **Wine pairing by genre** — pair a wine style to the winning movie using the
-  genres TMDB already returns. See [[Wine Pairing]] for the starter mapping.
-  This is authored content, not an API integration.
-- **Feature requests** — friends can file ideas without a GitHub account; they
-  land here as issues. See [[Feature Requests]].
+## Parked · Wine pairing
+
+Not on a milestone, and deliberately so. The pairings are **owned by the group's
+wine person** — the wine for each genre and the line that goes with it are his to
+write, not an engineering decision.
+
+The code side is a short job whenever his list lands: TMDB already returns genres
+for free, and [[Wine Pairing]] holds the empty 19-genre worksheet plus the
+integration notes. No placeholder pairings in the meantime.
 
 ## M2 · web-1.2 — Depth & Polish
 

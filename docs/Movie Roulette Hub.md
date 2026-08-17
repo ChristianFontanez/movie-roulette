@@ -21,7 +21,7 @@ The map of content. Everything starts here.
 
 ## Features
 
-- [[Wine Pairing]] — pair a wine to the winning movie's genre
+- [[Wine Pairing]] — 🅿️ parked, owned by the group's wine person
 - [[Feature Requests]] — how friends' ideas get into the tracker
 - [[API Integrations]] — what's wired up, what's possible, what isn't
 - [[Auth and Accounts]] — real sign-in, and claiming existing history
@@ -42,3 +42,4 @@ Things deliberately unresolved:
 - Do we migrate the existing Supabase project, or start the mobile app on a
   fresh one and import? (See [[ADR 0002 Auth and RLS]].)
 - Wine pairing: one wine per genre, or a short flight for a double feature?
+  *(For the wine person to decide — the app can do either.)*
