@@ -199,7 +199,8 @@ const colorFor = (i) => COLORS[i % COLORS.length];
 let me = null; // { id, name }
 let players = [];
 let movies = []; // this week's movies
-let spin = null; // this week's spin row (or null)
+let weekSpins = []; // every spin this week, oldest first
+let openSpin = null; // the latest spin still awaiting a watched/skipped call
 let rotation = 0; // current wheel rotation (radians)
 let animating = false;
 let lastAnimatedSpinId = null;
@@ -356,26 +357,22 @@ async function startApp() {
 // Everything the wheel has ever landed on, so we can warn about repeats.
 let watched = [];
 
+// Movies actually watched in earlier weeks — the basis for repeat warnings.
+// Matching on imdb_id as well as title means a re-add still catches when the
+// spelling differs ("Kung fu hustle" vs "Kungfu Hustle").
 async function loadWatched() {
   const { data } = await sb
-    .from("spins")
-    .select("winning_title,winning_movie_id,week_start")
+    .from("movies")
+    .select("title,imdb_id,week_start")
+    .eq("status", "watched")
     .lt("week_start", CUR_WEEK)
     .order("week_start", { ascending: false });
   if (!data) return;
-  // Resolve each winner's imdb_id so re-adds match even when the title
-  // is typed differently ("Kung fu hustle" vs "Kungfu Hustle").
-  const ids = data.map((s) => s.winning_movie_id).filter(Boolean);
-  let byId = {};
-  if (ids.length) {
-    const { data: rows } = await sb.from("movies").select("id,imdb_id").in("id", ids);
-    (rows || []).forEach((r) => (byId[r.id] = r.imdb_id));
-  }
-  watched = data.map((s) => ({
-    title: s.winning_title,
-    key: normTitle(s.winning_title),
-    imdb_id: byId[s.winning_movie_id] || null,
-    week: s.week_start,
+  watched = data.map((m) => ({
+    title: m.title,
+    key: normTitle(m.title),
+    imdb_id: m.imdb_id || null,
+    week: m.week_start,
   }));
 }
 
@@ -483,35 +480,35 @@ async function loadHistory() {
   const box = $("history");
   box.innerHTML = `<div class="sr-note">Loading…</div>`;
 
-  const { data: spins, error } = await sb
-    .from("spins")
-    .select("*")
-    .lt("week_start", CUR_WEEK)
-    .order("week_start", { ascending: false });
+  const [{ data: past, error }, { data: spins }] = await Promise.all([
+    sb.from("movies").select("*").lt("week_start", CUR_WEEK).order("created_at"),
+    sb.from("spins").select("*").lt("week_start", CUR_WEEK).order("created_at"),
+  ]);
   if (error) {
     box.innerHTML = "";
     box.appendChild(noteEl(error.message));
     return;
   }
-  if (!spins || !spins.length) {
+  if (!past || !past.length) {
     box.innerHTML = "";
-    box.appendChild(noteEl("No past picks yet — this is your first week!"));
+    box.appendChild(noteEl("No past movie nights yet — this is your first week!"));
     return;
   }
 
-  // Pull the winning movie rows for posters/ratings the spin didn't store,
-  // plus everything else that was on those wheels.
-  const weeks = spins.map((s) => s.week_start);
-  const { data: past } = await sb
-    .from("movies")
-    .select("*")
-    .in("week_start", weeks)
-    .order("created_at");
+  // Who spun each movie, so the history can still say "spun by …".
+  const spunBy = {};
+  (spins || []).forEach((s) => {
+    if (s.winning_movie_id && s.spun_by_name) spunBy[s.winning_movie_id] = s.spun_by_name;
+  });
+
   const byWeek = {};
-  (past || []).forEach((m) => (byWeek[m.week_start] = byWeek[m.week_start] || []).push(m));
+  past.forEach((m) => (byWeek[m.week_start] = byWeek[m.week_start] || []).push(m));
 
   box.innerHTML = "";
-  spins.forEach((s) => box.appendChild(historyRow(s, byWeek[s.week_start] || [])));
+  Object.keys(byWeek)
+    .sort()
+    .reverse()
+    .forEach((week) => box.appendChild(historyWeek(week, byWeek[week], spunBy)));
 }
 
 function noteEl(text) {
@@ -521,40 +518,58 @@ function noteEl(text) {
   return d;
 }
 
-function historyRow(s, weekMovies) {
-  const won = weekMovies.find((m) => m.id === s.winning_movie_id);
-  const row = document.createElement("div");
-  row.className = "hist-item";
+// One block per week: everything watched (there may be several), then the
+// movies that were passed over or never came up.
+function historyWeek(week, weekMovies, spunBy) {
+  const watchedList = weekMovies.filter((m) => statusOf(m) === "watched");
+  const rest = weekMovies.filter((m) => statusOf(m) !== "watched");
 
-  row.appendChild(posterEl(s.winning_poster_url || (won && won.poster_url), "hist-poster"));
+  const wrap = document.createElement("div");
+  wrap.className = "hist-week-block";
 
-  const main = document.createElement("div");
-  main.className = "hist-main";
-  main.innerHTML = `<div class="hist-week"></div><div class="hist-title"></div><div class="hist-who"></div>`;
-  main.querySelector(".hist-week").textContent = prettyWeek(parseYmd(s.week_start));
-  main.querySelector(".hist-title").textContent = s.winning_title || "—";
-  main.querySelector(".hist-who").textContent = [
-    s.winning_year || (won && won.year),
-    s.winner_name ? `${s.winner_name}'s pick` : null,
-    s.spun_by_name ? `spun by ${s.spun_by_name}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const head = document.createElement("div");
+  head.className = "hist-week";
+  head.textContent =
+    prettyWeek(parseYmd(week)) +
+    (watchedList.length > 1 ? ` · ${watchedList.length} movies` : "");
+  wrap.appendChild(head);
 
-  const badges = won ? ratingsEl(won) : null;
-  if (badges) main.appendChild(badges);
-
-  // The rest of that week's wheel, for context on what it beat.
-  const others = weekMovies.filter((m) => m.id !== s.winning_movie_id);
-  if (others.length) {
-    const also = document.createElement("div");
-    also.className = "hist-also";
-    also.textContent = `also on the wheel: ${others.map((m) => m.title).join(", ")}`;
-    main.appendChild(also);
+  if (!watchedList.length) {
+    const none = document.createElement("div");
+    none.className = "hist-none";
+    none.textContent = "nothing watched this week";
+    wrap.appendChild(none);
   }
 
-  row.appendChild(main);
-  return row;
+  watchedList.forEach((m) => {
+    const row = document.createElement("div");
+    row.className = "hist-item";
+    row.appendChild(posterEl(m.poster_url, "hist-poster"));
+    const main = document.createElement("div");
+    main.className = "hist-main";
+    main.innerHTML = `<div class="hist-title"></div><div class="hist-who"></div>`;
+    main.querySelector(".hist-title").textContent = m.title;
+    main.querySelector(".hist-who").textContent = [
+      m.year,
+      m.runtime,
+      `${playerName(m.owner_id)}'s pick`,
+      spunBy[m.id] ? `spun by ${spunBy[m.id]}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const badges = ratingsEl(m);
+    if (badges) main.appendChild(badges);
+    row.appendChild(main);
+    wrap.appendChild(row);
+  });
+
+  if (rest.length) {
+    const also = document.createElement("div");
+    also.className = "hist-also";
+    also.textContent = `not watched: ${rest.map((m) => m.title).join(", ")}`;
+    wrap.appendChild(also);
+  }
+  return wrap;
 }
 
 function setupMenu() {
@@ -625,16 +640,22 @@ async function onReset(e) {
     return;
   }
 
+  // Clear the week's spins and put every movie back on the wheel.
   const { error } = await sb.from("spins").delete().eq("week_start", CUR_WEEK);
   if (error) {
     msg.textContent = error.message;
     msg.className = "small bad";
     return;
   }
+  await sb
+    .from("movies")
+    .update({ status: "pending", watched_at: null })
+    .eq("week_start", CUR_WEEK);
+
   lastAnimatedSpinId = null;
   $("reset-pass").value = "";
   await reload();
-  msg.textContent = "Done — the wheel is ready to spin again!";
+  msg.textContent = "Done — every movie is back on the wheel!";
   msg.className = "small ok";
   setTimeout(closeMenu, 1400);
 }
@@ -652,15 +673,17 @@ async function maybeCarryOver() {
     .insert({ key: claimKey, value: new Date().toISOString() });
   if (claimErr) return false; // another device already handled it
 
-  const [{ data: prevMovies }, { data: prevSpin }] = await Promise.all([
-    sb.from("movies").select("*").eq("week_start", PREV_WEEK).order("created_at"),
-    sb.from("spins").select("winning_movie_id").eq("week_start", PREV_WEEK).maybeSingle(),
-  ]);
+  const { data: prevMovies } = await sb
+    .from("movies")
+    .select("*")
+    .eq("week_start", PREV_WEEK)
+    .order("created_at");
   if (!prevMovies || !prevMovies.length) return false;
 
-  const wonId = prevSpin ? prevSpin.winning_movie_id : null;
+  // Anything you didn't actually watch gets another shot — including the
+  // ones the wheel picked but the group passed on.
   const rollovers = prevMovies
-    .filter((m) => m.id !== wonId)
+    .filter((m) => statusOf(m) !== "watched")
     .map((m) => ({
       title: m.title,
       owner_id: m.owner_id,
@@ -675,6 +698,7 @@ async function maybeCarryOver() {
       providers: m.providers,
       note: m.note,
       carried_over: true,
+      status: "pending",
     }));
   if (!rollovers.length) return false;
 
@@ -692,15 +716,35 @@ function playerName(id) {
   return p ? p.name : "Someone";
 }
 
-// Movies on the wheel (stable order = same for everyone)
+const statusOf = (m) => m.status || "pending";
+
+// Movies still up for grabs — these are the wheel segments.
+// Stable order so every phone draws the same wheel.
 function eligibleMovies() {
-  return movies;
+  return movies.filter((m) => statusOf(m) === "pending");
 }
+const watchedThisWeek = () => movies.filter((m) => statusOf(m) === "watched");
+const skippedThisWeek = () => movies.filter((m) => statusOf(m) === "skipped");
 
 function render() {
+  renderTally();
   renderMovieList();
   renderWheelState();
   seenFirstRender = true;
+}
+
+// A one-line account of where the night stands.
+function renderTally() {
+  const el = $("tally");
+  if (!el) return;
+  const w = watchedThisWeek().length;
+  const s = skippedThisWeek().length;
+  const p = eligibleMovies().length;
+  const parts = [];
+  if (w) parts.push(`✅ ${w} watched`);
+  if (s) parts.push(`⏭ ${s} set aside`);
+  parts.push(`🎯 ${p} on the wheel`);
+  el.textContent = parts.join("  ·  ");
 }
 
 // Poster image, or a film-reel placeholder when we have no artwork.
@@ -768,10 +812,20 @@ function renderMovieList() {
     ul.appendChild(li);
     return;
   }
-  movies.forEach((m, idx) => {
+  // On the wheel first, then set aside, then already watched.
+  const rank = { pending: 0, skipped: 1, watched: 2 };
+  const elig = eligibleMovies();
+  const ordered = [...movies].sort(
+    (a, b) => rank[statusOf(a)] - rank[statusOf(b)]
+  );
+
+  ordered.forEach((m) => {
+    const st = statusOf(m);
+    const idx = elig.findIndex((e) => e.id === m.id); // -1 once decided
     const li = document.createElement("li");
-    li.className = "movie-item";
-    li.style.borderLeftColor = colorFor(idx); // matches its wheel segment
+    li.className = `movie-item status-${st}`;
+    // Match its wheel segment while it's still in play.
+    li.style.borderLeftColor = idx >= 0 ? colorFor(idx) : "transparent";
     li.appendChild(posterEl(m.poster_url, "movie-poster"));
     const main = document.createElement("div");
     main.className = "movie-main";
@@ -782,8 +836,10 @@ function renderMovieList() {
 
     const badges = ratingsEl(m) || document.createElement("div");
     badges.className = "ratings";
+    if (st === "watched") badges.appendChild(tag("✅ watched", "watched"));
+    if (st === "skipped") badges.appendChild(tag("⏭ set aside", "skipped"));
     if (m.carried_over) badges.appendChild(tag("↩ held over", "carried"));
-    if (findWatched(m)) badges.appendChild(tag("👁 seen before", "seen"));
+    if (st === "pending" && findWatched(m)) badges.appendChild(tag("👁 seen before", "seen"));
     if (badges.childNodes.length) main.appendChild(badges);
 
     if (m.providers) {
@@ -805,6 +861,19 @@ function renderMovieList() {
     main.onclick = () => editNote(m);
 
     li.appendChild(main);
+
+    // Put a set-aside or already-watched movie back into play.
+    if (st !== "pending") {
+      const back = document.createElement("button");
+      back.className = "movie-back";
+      back.type = "button";
+      back.textContent = "↩";
+      back.title = "Put back on the wheel";
+      back.setAttribute("aria-label", `Put ${m.title} back on the wheel`);
+      back.onclick = () => setMovieStatus(m, "pending");
+      li.appendChild(back);
+    }
+
     const del = document.createElement("button");
     del.className = "movie-del";
     del.type = "button";
@@ -1031,23 +1100,21 @@ function renderWheelState() {
   const elig = eligibleMovies();
   $("wheel-empty").classList.toggle("hidden", elig.length > 0);
 
-  if (spin) {
-    // Resolve the winning movie's index in the eligible order
-    const idx = elig.findIndex((m) => m.id === spin.winning_movie_id);
-    if (idx >= 0 && lastAnimatedSpinId !== spin.id && !animating && seenFirstRender) {
+  if (openSpin) {
+    // The wheel stopped on something and nobody has said what happened yet.
+    const idx = elig.findIndex((m) => m.id === openSpin.winning_movie_id);
+    if (idx >= 0 && lastAnimatedSpinId !== openSpin.id && !animating && seenFirstRender) {
       // A spin landed while we're watching → animate to it. The result stays
       // hidden until the wheel stops; animateToWinner reveals it at the end.
-      animateToWinner(idx, elig.length, spin.id);
+      animateToWinner(idx, elig.length, openSpin.id);
       return;
     }
     if (idx >= 0) {
-      // Already-decided week (or we just opened the app): sit at the result.
-      lastAnimatedSpinId = spin.id;
+      // We just opened the app mid-decision: sit at the result.
+      lastAnimatedSpinId = openSpin.id;
       rotation = finalRotationFor(idx, elig.length, rotation) % TWO_PI;
-      drawWheel(rotation);
-    } else if (idx < 0) {
-      drawWheel(rotation);
     }
+    drawWheel(rotation);
     if (animating) return; // spin still in flight — don't reveal early
     settleOnResult();
     return;
@@ -1056,36 +1123,41 @@ function renderWheelState() {
   hide("result");
   drawWheel(rotation);
   const canSpin = elig.length >= 1 && !animating;
+  const watched = watchedThisWeek().length;
   $("spin-btn").disabled = !canSpin;
-  $("spin-btn").textContent = "Spin the wheel";
+  $("spin-btn").textContent = watched ? "Spin again" : "Spin the wheel";
   if (elig.length === 0) {
-    $("spin-note").textContent = "Add movies to spin.";
+    $("spin-note").textContent = movies.length
+      ? "Every movie has been decided — add another, or put one back on the wheel."
+      : "Add movies to spin.";
   } else {
-    $("spin-note").textContent = `${elig.length} movie${elig.length > 1 ? "s" : ""} on the wheel`;
+    $("spin-note").textContent =
+      `${elig.length} movie${elig.length > 1 ? "s" : ""} on the wheel` +
+      (watched ? ` · ${watched} watched so far` : "");
   }
 }
 
 function showResult() {
-  if (!spin) return hide("result");
+  if (!openSpin) return hide("result");
   const el = $("result");
   el.innerHTML = `
-    <div class="win-tag">This week we're watching</div>
+    <div class="win-tag">The wheel landed on</div>
     <div class="win-title"></div>
     <div class="win-owner"></div>`;
 
-  const poster = spin.winning_poster_url;
+  const poster = openSpin.winning_poster_url;
   if (poster) el.insertBefore(posterEl(poster, "win-poster"), el.children[1]);
 
-  el.querySelector(".win-title").textContent = spin.winning_title || "—";
+  el.querySelector(".win-title").textContent = openSpin.winning_title || "—";
   el.querySelector(".win-owner").textContent = [
-    spin.winning_year,
-    spin.winner_name ? `${spin.winner_name}'s pick` : null,
+    openSpin.winning_year,
+    openSpin.winner_name ? `${openSpin.winner_name}'s pick` : null,
   ]
     .filter(Boolean)
     .join(" · ");
 
-  // Pull ratings off the winning movie if it's still in this week's list.
-  const won = movies.find((m) => m.id === spin.winning_movie_id);
+  // Pull ratings off the movie itself if it's still in this week's list.
+  const won = movies.find((m) => m.id === openSpin.winning_movie_id);
   const badges = won ? ratingsEl(won) : null;
   if (badges) el.appendChild(badges);
 
@@ -1097,19 +1169,77 @@ function showResult() {
       .join(" · ");
     el.appendChild(extra);
   }
-  if (spin.spun_by_name) {
+  if (openSpin.spun_by_name) {
     const by = document.createElement("div");
     by.className = "win-spun";
-    by.textContent = `spun by ${spin.spun_by_name}`;
+    by.textContent = `spun by ${openSpin.spun_by_name}`;
     el.appendChild(by);
   }
+
+  // Nothing moves until someone says what actually happened.
+  const ask = document.createElement("div");
+  ask.className = "win-ask";
+  ask.textContent = "Are we watching it?";
+  el.appendChild(ask);
+
+  const actions = document.createElement("div");
+  actions.className = "win-actions";
+  const yes = document.createElement("button");
+  yes.className = "btn primary";
+  yes.type = "button";
+  yes.textContent = "✅ We watched it";
+  yes.onclick = () => decideSpin("watched");
+  const no = document.createElement("button");
+  no.className = "btn";
+  no.type = "button";
+  no.textContent = "⏭ Not this one";
+  no.onclick = () => decideSpin("skipped");
+  actions.append(yes, no);
+  el.appendChild(actions);
 
   show("result");
 }
 
+// Record what happened to the movie the wheel stopped on. 'watched' takes it
+// out of the running for good; 'skipped' sets it aside but keeps it for next
+// week, since it never actually got watched.
+async function decideSpin(outcome) {
+  if (!openSpin) return;
+  const spinId = openSpin.id;
+  const movieId = openSpin.winning_movie_id;
+  const el = $("result");
+  el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+
+  if (movieId) {
+    const patch =
+      outcome === "watched"
+        ? { status: "watched", watched_at: new Date().toISOString() }
+        : { status: "skipped" };
+    const { error } = await sb.from("movies").update(patch).eq("id", movieId);
+    if (error) {
+      alert(error.message);
+      el.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      return;
+    }
+  }
+  await sb
+    .from("spins")
+    .update({ outcome, decided_by_name: me.name })
+    .eq("id", spinId);
+  await reload();
+}
+
+async function setMovieStatus(m, status) {
+  const patch = { status };
+  if (status !== "watched") patch.watched_at = null;
+  const { error } = await sb.from("movies").update(patch).eq("id", m.id);
+  if (error) return alert(error.message);
+  await reload();
+}
+
 async function onSpin() {
   const elig = eligibleMovies();
-  if (elig.length === 0 || animating || spin) return;
+  if (elig.length === 0 || animating || openSpin) return;
   const winIndex = Math.floor(Math.random() * elig.length);
   const w = elig[winIndex];
   const row = {
@@ -1132,12 +1262,13 @@ async function onSpin() {
     ({ data, error } = await sb.from("spins").insert(base).select("*").maybeSingle());
   }
   if (error) {
-    // Someone else spun first (unique week) — load their result
+    // Someone else spun at the same moment — pick up their result instead.
     await reload();
     return;
   }
-  spin = data;
-  render(); // realtime + this will animate for us
+  openSpin = data;
+  weekSpins = [...weekSpins, data];
+  render(); // animates, then reveals the result
 }
 
 function animateToWinner(winIndex, n, spinId) {
@@ -1177,12 +1308,12 @@ function animateToWinner(winIndex, n, spinId) {
   requestAnimationFrame(frame);
 }
 
-// Reveal the winner and put the controls in their "already spun" state.
+// Reveal what the wheel landed on and wait for the verdict.
 function settleOnResult() {
   showResult();
   $("spin-btn").disabled = true;
-  $("spin-btn").textContent = "Spun for this week 🎉";
-  $("spin-note").textContent = "Come back next week for another spin.";
+  $("spin-btn").textContent = "Spin again";
+  $("spin-note").textContent = "Say whether you watched it to keep going.";
 }
 
 // ------------------------------------------------------------------
@@ -1205,11 +1336,9 @@ async function onRemoteChange() {
   reloadQueued = true;
   setTimeout(async () => {
     reloadQueued = false;
-    const wasSpun = !!spin;
     await reloadDataOnly();
-    // If a spin just appeared and we haven't animated it, animate now
+    // If a spin just landed, render() animates to it.
     render();
-    void wasSpun;
   }, 150);
 }
 
@@ -1217,11 +1346,13 @@ async function reloadDataOnly() {
   const [pRes, mRes, sRes] = await Promise.all([
     sb.from("players").select("id,name").order("name"),
     sb.from("movies").select("*").eq("week_start", CUR_WEEK).order("created_at"),
-    sb.from("spins").select("*").eq("week_start", CUR_WEEK).maybeSingle(),
+    sb.from("spins").select("*").eq("week_start", CUR_WEEK).order("created_at"),
   ]);
   players = pRes.data || [];
   movies = mRes.data || [];
-  spin = sRes.data || null;
+  weekSpins = sRes.data || [];
+  // Only the newest undecided spin needs a call; older ones are settled.
+  openSpin = [...weekSpins].reverse().find((s) => (s.outcome || "pending") === "pending") || null;
 }
 
 // ------------------------------------------------------------------
