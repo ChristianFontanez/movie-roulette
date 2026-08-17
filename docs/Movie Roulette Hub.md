@@ -12,6 +12,7 @@ The map of content. Everything starts here.
 
 - [[ROADMAP]] — phases, milestones, what's next
 - [[Release Process]] — how versions are cut and shipped
+- [[Dev Environment]] — what's installed, what M3 needs first
 - [[Obsidian Setup]] — how this vault and GitHub stay in sync
 
 ## How it works today
