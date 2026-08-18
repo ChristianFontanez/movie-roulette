@@ -42,7 +42,7 @@ looked up by name via OMDb `?t=`, which is how they still get posters.
 | --- | --- |
 | **IMDb official API** | No free tier. Enterprise pricing via AWS Data Exchange. OMDb is the practical route to IMDb ratings. |
 | **Rotten Tomatoes API** | No public access; partner-only. OMDb surfaces RT scores, which is the only realistic path. |
-| **Letterboxd API** | No public API. Deep links by slug are the ceiling. |
+| **Letterboxd API** | Request-only, and they explicitly exclude "private or personal projects" — which is us. Apply anyway (#17), expect nothing. **Use the per-member RSS feed instead**: public, no key, covers diary entries, reviews and lists. |
 | **JustWatch API** | No public API — but TMDB's provider `link` is JustWatch-backed, so we already have the useful part. |
 | **Wine pairing APIs** | Don't exist for this. Wine data APIs are paid/partner. See [[Wine Pairing]] — this is authored content. |
 
